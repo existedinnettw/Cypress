@@ -1,0 +1,8 @@
+build/
+install/
+artifacts/
+benchmarks/
+images/
+results/
+**/__pycache__/
+*.kicad_pcb
