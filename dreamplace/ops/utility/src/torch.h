@@ -26,17 +26,13 @@
 
 #endif
 
-#if TORCH_MAJOR_VERSION > 1 || (TORCH_MAJOR_VERSION == 1 && TORCH_MINOR_VERSION >= 8)
-
+// AT_PRIVATE_CASE_TYPE changed signature in torch 1.8 and was removed in 1.13,
+// so spell the dispatch case out directly.
 #define DREAMPLACE_PRIVATE_CASE_TYPE(NAME, enum_type, type, ...) \
-  AT_PRIVATE_CASE_TYPE(NAME, enum_type, type, __VA_ARGS__)
-
-#else
-
-#define DREAMPLACE_PRIVATE_CASE_TYPE(NAME, enum_type, type, ...) \
-  AT_PRIVATE_CASE_TYPE(enum_type, type, __VA_ARGS__)
-
-#endif
+  case enum_type: {                                              \
+    using scalar_t = type;                                       \
+    return __VA_ARGS__();                                        \
+  }
 
 #else
 
