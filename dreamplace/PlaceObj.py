@@ -786,21 +786,11 @@ class PlaceObj(nn.Module):
         dtype = data_collections.pos[0].dtype
         device = self.data_collections.pos[0].device
 
-        # build a pin side flag tensor, 1->top, 0->bottom
-        num_pins = data_collections.pin_offset_x.size(0)
-        indices = torch.arange(num_pins, device=device)
-        node_indices = torch.searchsorted(data_collections.flat_node2pin_start_map[1:], indices, right=True)
-        pin_side = data_collections.node_side_flag[node_indices]
-        # Note:
-        # equivalent to:
-        # for (int i = 0; i < num_nodes; i++) {
-        #     int bgn = placedb.flat_node2pin_start_map[i]
-        #     int end = placedb.flat_node2pin_start_map[i+1]
-        #     pin_side[bgn:end+1] = data_collections.node_side_flag[i]
-        # }
+        # build a pin side flag tensor, 1->top, 0->bottom; pins are numbered
+        # by net, not by node, so map each pin through pin2node_map
+        pin_side = data_collections.node_side_flag[data_collections.pin2node_map.long()].contiguous()
 
-
-        return net_crossing.NetCrossing(
+        net_crossing_op = net_crossing.NetCrossing(
             flat_netpin=data_collections.flat_net2pin_map,
             netpin_start=data_collections.flat_net2pin_start_map,
             net_mask=data_collections.net_mask_ignore_large_degrees,
@@ -810,7 +800,7 @@ class PlaceObj(nn.Module):
             _sigma=torch.tensor(1, dtype=dtype, device=device),
         )
 
-        # net crossing for pos
+        # the op works on pin locations, callers pass cell locations
         def build_net_crossing_op(pos):
             return net_crossing_op(pin_pos_op(pos))
 
