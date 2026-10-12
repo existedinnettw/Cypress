@@ -85,6 +85,9 @@ Notes:
 - Footprints with no connected nets (mounting holes, fiducials) stay where
   they are, as do locked footprints. Lock edge connectors and other parts
   whose position is set by the enclosure before you run the placer.
+- Rule areas set to disallow footprints are treated as keep-outs on their
+  copper layers (by bounding box). Use them for areas under modules, cards
+  or heatsinks.
 - Ground nets (`GND`/`GROUND`, configurable) are left out of wirelength,
   because they are usually connected by planes.
 - Parts stay on the side of the board they are on. Through-hole parts block

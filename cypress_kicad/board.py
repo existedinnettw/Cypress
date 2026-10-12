@@ -87,6 +87,34 @@ def _placement_box(pcbnew, fp):
     return fp.GetBoundingBox(False)
 
 
+def _keepouts(pcbnew, board):
+    """Rule areas that forbid footprints, as fixed pinless blockers per side.
+
+    The placer only knows boxes, so a non-rectangular area blocks its
+    bounding box.
+    """
+    out = []
+    for i, zone in enumerate(board.Zones()):
+        if not (zone.GetIsRuleArea() and zone.GetDoNotAllowFootprints()):
+            continue
+        box = zone.GetBoundingBox()
+        layers = zone.GetLayerSet()
+        for side, layer in (("top", pcbnew.F_Cu), ("bottom", pcbnew.B_Cu)):
+            if not layers.Contains(layer):
+                continue
+            out.append(Component(
+                key="keepout-%d-%s" % (i, side),
+                ref="keepout %s (%s)" % (zone.GetZoneName() or i, side),
+                width=_mm(pcbnew, box.GetWidth()),
+                height=_mm(pcbnew, box.GetHeight()),
+                cx=_mm(pcbnew, box.GetCenter().x),
+                cy=_mm(pcbnew, box.GetCenter().y),
+                bottom=side == "bottom",
+                fixed=True,
+            ))
+    return out
+
+
 def extract(board, name: Optional[str] = None, selected_only: bool = False,
             ignore_nets: str = r"(?i)GND|GROUND", spacing: float = 0.0,
             edge_clearance: float = 0.0, keep_locked: bool = True) -> Problem:
@@ -136,6 +164,7 @@ def extract(board, name: Optional[str] = None, selected_only: bool = False,
 
     if not comps:
         raise ValueError("The board has no footprints with pads")
+    comps += _keepouts(pcbnew, board)
     if not any(not c.fixed for c in comps):
         raise ValueError("Nothing to place: every footprint is fixed (locked or not selected)")
 

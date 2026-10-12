@@ -126,6 +126,30 @@ class RoundTrip(unittest.TestCase):
         self.assertGreater(checked, 50)
 
 
+@unittest.skipIf(pcbnew is None, "pcbnew not importable")
+class Keepouts(unittest.TestCase):
+    def test_rule_areas_become_fixed_blockers(self):
+        board = pcbnew.LoadBoard(BOARD)
+        zone = pcbnew.ZONE(board)
+        zone.SetIsRuleArea(True)
+        zone.SetDoNotAllowFootprints(True)
+        zone.SetLayer(pcbnew.B_Cu)
+        outline = zone.Outline()
+        outline.NewOutline()
+        for x, y in ((30, 20), (40, 20), (40, 26), (30, 26)):
+            outline.Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+        board.Add(zone)
+        problem = kboard.extract(board)
+        blockers = [c for c in problem.components if c.key.startswith("keepout")]
+        self.assertEqual(len(blockers), 1)
+        k = blockers[0]
+        self.assertTrue(k.fixed and k.bottom and not k.pins)
+        self.assertAlmostEqual(k.width, 10, places=3)
+        self.assertAlmostEqual(k.height, 6, places=3)
+        self.assertAlmostEqual(k.cx, 35, places=3)
+        self.assertAlmostEqual(k.cy, 23, places=3)
+
+
 class Legalizer(unittest.TestCase):
     def test_removes_overlaps_and_respects_sides(self):
         rng = random.Random(2)
