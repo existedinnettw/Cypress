@@ -22,6 +22,76 @@ cd /Cypress
 python dreamplace/Placer.py path/to/your/config.json
 ```
 
+## Use with KiCad
+
+Cypress can place the footprints of a KiCad board (KiCad 7 or newer) directly,
+either from a button in the PCB editor or from the command line. The
+`cypress_kicad` package turns the board into a placement problem: each
+footprint's courtyard becomes a box, pads become pins, and the board outline
+becomes the placement region. It runs the Cypress engine, removes any overlaps
+that remain, and moves and rotates the footprints on the board.
+
+### 1. Get the engine
+
+The engine needs PyTorch and compiled C++/CUDA ops, so it runs in its own
+process, separate from KiCad's Python. You can use either option:
+
+- **Docker** (easiest): `docker build -f docker/Dockerfile -t cypress:cpu .`
+  For an NVIDIA GPU, build the CUDA image instead:
+  ```sh
+  docker build -f docker/Dockerfile -t cypress:cuda \
+    --build-arg BASE=nvidia/cuda:11.7.1-devel-ubuntu22.04 \
+    --build-arg TORCH_INDEX=https://download.pytorch.org/whl/cu117 .
+  ```
+- **Local build**: follow README_DREAMPlace.md and install to `<repo>/install`
+  (`cmake .. -DCMAKE_INSTALL_PREFIX=../install && make install`). Then point
+  the plugin at a Python that has PyTorch.
+
+Without a GPU it runs on the CPU, including part rotation.
+
+### 2. KiCad plugin
+
+```sh
+git submodule update --init --recursive   # only needed for a local build
+python3 kicad_plugin/install.py           # symlinks into KiCad's plugin folder
+```
+
+Restart the PCB editor, then click the **Cypress Placer** toolbar button or
+go to *Tools → External Plugins → Cypress Placer*. In the dialog, choose the
+engine (`docker` or `local`) and the placement options, then click **Place**.
+If any footprints are selected, you can move only those and leave the rest
+fixed. Locked footprints always stay fixed. The result can be undone with
+*Edit → Undo*. Settings are saved to `~/.config/cypress-kicad/settings.json`.
+
+### 3. Command line
+
+Run the CLI with a Python that can import `pcbnew`, such as KiCad's own Python.
+It also searches the usual install locations; otherwise set `CYPRESS_PCBNEW_PATH`.
+
+```sh
+python3 -m cypress_kicad check --runner docker
+python3 -m cypress_kicad place board.kicad_pcb -o placed.kicad_pcb --runner docker
+python3 -m cypress_kicad place board.kicad_pcb -o placed.kicad_pcb --refs U1 U2 C1 C2   # move only these
+python3 -m cypress_kicad export board.kicad_pcb -d bookshelf/    # Bookshelf files only
+```
+
+See `python3 -m cypress_kicad place --help` for all options, including
+iterations, target density, rotation, ratsnest-crossing penalty, part spacing,
+edge clearance, ignored nets, and the legalization grid.
+
+Notes:
+- Each part's courtyard is used as its box. A part without a courtyard uses
+  its body bounding box instead. Footprints without pads are ignored.
+- Footprints with no connected nets (mounting holes, fiducials) stay where
+  they are, as do locked footprints. Lock edge connectors and other parts
+  whose position is set by the enclosure before you run the placer.
+- Ground nets (`GND`/`GROUND`, configurable) are left out of wirelength,
+  because they are usually connected by planes.
+- Parts stay on the side of the board they are on. Through-hole parts block
+  both sides during legalization.
+- When the board has no outline, the current spread of parts plus a 10% margin
+  is used as the placement region.
+
 ## Run Hyperparameter search
 
 ```sh
