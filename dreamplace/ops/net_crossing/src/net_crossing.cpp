@@ -13,6 +13,7 @@ DREAMPLACE_BEGIN_NAMESPACE
 template <typename T>
 void computeNetCrossingLauncher(const T* x, const T* y, const int* flat_netpin,
                                const int* netpin_start, const unsigned char* net_mask,
+                               const int* pin_side,
                                int num_nets, T* net_crossing,
                                T *lambda_, T *mu_, T *sigma_,
                                T *grad_intermediate_x, T *grad_intermediate_y,
@@ -32,7 +33,13 @@ void computeNetCrossingLauncher(const T* x, const T* y, const int* flat_netpin,
         for (int net_j_sink_pin_idx = netpin_start[j] + 1; net_j_sink_pin_idx < netpin_start[j + 1]; ++net_j_sink_pin_idx) {
           int net_j_src_pin_id = flat_netpin[netpin_start[j]];
           int net_j_sink_pin_id = flat_netpin[net_j_sink_pin_idx];
-          
+
+          // nets entirely on opposite sides of the board cannot cross
+          if (pin_side[net_i_src_pin_id] == pin_side[net_i_sink_pin_id] &&
+              pin_side[net_j_src_pin_id] == pin_side[net_j_sink_pin_id] &&
+              pin_side[net_i_src_pin_id] != pin_side[net_j_src_pin_id])
+            continue;
+
           T x1 = x[net_i_src_pin_id];
           T y1 = y[net_i_src_pin_id];
           T x2 = x[net_i_sink_pin_id];
@@ -42,9 +49,11 @@ void computeNetCrossingLauncher(const T* x, const T* y, const int* flat_netpin,
           T x4 = x[net_j_sink_pin_id];
           T y4 = y[net_j_sink_pin_id];
 
-           // Bezier curve intersection
-          T t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / ((x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4));          
-          T u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / ((x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4));
+          // Bezier curve intersection; epsilon guards parallel segments as in
+          // the CUDA kernel
+          T epsilon = 1e-5;
+          T t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / ((x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4) + epsilon);
+          T u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / ((x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4) + epsilon);
 
           // std::cout << "custom t: " << t << " u: " << u << "\n";
 
@@ -83,23 +92,23 @@ void computeNetCrossingLauncher(const T* x, const T* y, const int* flat_netpin,
             }
           };
 
-          T dt_dx1 = ((y3 - y4) * (x4 * (y3 - y2) + x3 * (y2 - y4) + x2 * (y4 - y3))) / std::pow(-x3 * (y1 - y2) - x4 * (y2 - y1) + (x1 - x2) * (y3 - y4), 2);
-          T dt_dy1 = ((x3 - x4) * (-x4 * (y3 - y2) - x3 * (y2 - y4) + x2 * (y3 - y4))) / std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2);
-          T dt_dx2 = -((y4 - y3) * ((x1 - x3) * (y3 - y4) - (x3 - x4) * (y1 - y3))) / std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2);
-          T dt_dy2 = -((x3 - x4) * ((x1 - x3) * (y3 - y4) - (x3 - x4) * (y1 - y3))) / std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2);
-          T dt_dx3 = ((y4 - y3) * (-x4 * (y2 - y1) - x2 * (y1 - y4) + x1 * (y2 - y4))) / std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2);
-          T dt_dy3 = ((x3 - x4) * (x4 * (y1 - y2) + x1 * (y2 - y4) + x2 * (y4 - y1))) / std::pow(-x3 * (y1 - y2) - x4 * (y2 - y1) + (x1 - x2) * (y3 - y4), 2);
-          T dt_dx4 = ((y3 - y4) * (x3 * (y1 - y2) + x1 * (y2 - y3) + x2 * (y3 - y1))) / std::pow((x3 - x4) * (y1 - y2) - (x1 - x2) * (y3 - y4), 2);
-          T dt_dy4 = ((x4 - x3) * (-x3 * (y2 - y1) - x2 * (y1 - y3) + x1 * (y2 - y3)))/ std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2);
+          T dt_dx1 = ((y3 - y4) * (x4 * (y3 - y2) + x3 * (y2 - y4) + x2 * (y4 - y3))) / (std::pow(-x3 * (y1 - y2) - x4 * (y2 - y1) + (x1 - x2) * (y3 - y4), 2) + epsilon);
+          T dt_dy1 = ((x3 - x4) * (-x4 * (y3 - y2) - x3 * (y2 - y4) + x2 * (y3 - y4))) / (std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2) + epsilon);
+          T dt_dx2 = -((y4 - y3) * ((x1 - x3) * (y3 - y4) - (x3 - x4) * (y1 - y3))) / (std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2) + epsilon);
+          T dt_dy2 = -((x3 - x4) * ((x1 - x3) * (y3 - y4) - (x3 - x4) * (y1 - y3))) / (std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2) + epsilon);
+          T dt_dx3 = ((y4 - y3) * (-x4 * (y2 - y1) - x2 * (y1 - y4) + x1 * (y2 - y4))) / (std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2) + epsilon);
+          T dt_dy3 = ((x3 - x4) * (x4 * (y1 - y2) + x1 * (y2 - y4) + x2 * (y4 - y1))) / (std::pow(-x3 * (y1 - y2) - x4 * (y2 - y1) + (x1 - x2) * (y3 - y4), 2) + epsilon);
+          T dt_dx4 = ((y3 - y4) * (x3 * (y1 - y2) + x1 * (y2 - y3) + x2 * (y3 - y1))) / (std::pow((x3 - x4) * (y1 - y2) - (x1 - x2) * (y3 - y4), 2) + epsilon);
+          T dt_dy4 = ((x4 - x3) * (-x3 * (y2 - y1) - x2 * (y1 - y3) + x1 * (y2 - y3)))/ (std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2) + epsilon);
 
-          T du_dx1 = ((y2 - y1) * (-x4 * (y3 - y2) - x3 * (y2 - y4) + x2 * (y3 - y4))) / std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2);
-          T du_dy1 = ((x1 - x2) * (x4 * (y2 - y3) + x2 * (y3 - y4) + x3 * (y4 - y2))) / std::pow(-x3 * (y1 - y2) - x4 * (y2 - y1) + (x1 - x2) * (y3 - y4), 2);
-          T du_dx2 = -((y1 - y2) * (x4 * (y3 - y1) + x3 * (y1 - y4) + x1 * (y4 - y3))) / std::pow(-x3 * (y1 - y2) - x4 * (y2 - y1) + (x1 - x2) * (y3 - y4), 2);
-          T du_dy2 = -((x1 - x2) * (x4 * (y1 - y3) + x1 * (y3 - y4) + x3 * (y4 - y1))) / std::pow((x3 - x4) * (y1 - y2) - (x1 - x2) * (y3 - y4), 2);
-          T du_dx3 = ((y1 - y2) * (x4 * (y2 - y1) + x2 * (y1 - y4) + x1 * (y4 - y2))) / std::pow(-x3 * (y1 - y2) - x4 * (y2 - y1) + (x1 - x2) * (y3 - y4), 2);
-          T du_dy3 = ((x1 - x2) * (x4 * (y1 - y2) + x1 * (y2 - y4) + x2 * (y4 - y1))) / std::pow(-x3 * (y1 - y2) - x4 * (y2 - y1) + (x1 - x2) * (y3 - y4), 2);
-          T du_dx4 = ((y1 - y2) * ((x1 - x2) * (y1 - y3) - (x1 - x3) * (y1 - y2))) / std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2);
-          T du_dy4 = ((x2 - x1) * ((x1 - x2) * (y1 - y3) - (x1 - x3) * (y1 - y2))) / std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2);
+          T du_dx1 = ((y2 - y1) * (-x4 * (y3 - y2) - x3 * (y2 - y4) + x2 * (y3 - y4))) / (std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2) + epsilon);
+          T du_dy1 = ((x1 - x2) * (x4 * (y2 - y3) + x2 * (y3 - y4) + x3 * (y4 - y2))) / (std::pow(-x3 * (y1 - y2) - x4 * (y2 - y1) + (x1 - x2) * (y3 - y4), 2) + epsilon);
+          T du_dx2 = -((y1 - y2) * (x4 * (y3 - y1) + x3 * (y1 - y4) + x1 * (y4 - y3))) / (std::pow(-x3 * (y1 - y2) - x4 * (y2 - y1) + (x1 - x2) * (y3 - y4), 2) + epsilon);
+          T du_dy2 = -((x1 - x2) * (x4 * (y1 - y3) + x1 * (y3 - y4) + x3 * (y4 - y1))) / (std::pow((x3 - x4) * (y1 - y2) - (x1 - x2) * (y3 - y4), 2) + epsilon);
+          T du_dx3 = ((y1 - y2) * (x4 * (y2 - y1) + x2 * (y1 - y4) + x1 * (y4 - y2))) / (std::pow(-x3 * (y1 - y2) - x4 * (y2 - y1) + (x1 - x2) * (y3 - y4), 2) + epsilon);
+          T du_dy3 = ((x1 - x2) * (x4 * (y1 - y2) + x1 * (y2 - y4) + x2 * (y4 - y1))) / (std::pow(-x3 * (y1 - y2) - x4 * (y2 - y1) + (x1 - x2) * (y3 - y4), 2) + epsilon);
+          T du_dx4 = ((y1 - y2) * ((x1 - x2) * (y1 - y3) - (x1 - x3) * (y1 - y2))) / (std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2) + epsilon);
+          T du_dy4 = ((x2 - x1) * ((x1 - x2) * (y1 - y3) - (x1 - x3) * (y1 - y2))) / (std::pow((x1 - x2) * (y3 - y4) - (x3 - x4) * (y1 - y2), 2) + epsilon);
 
           // NC = f * g
           T df_dx1 = bell_gradient(t - 0.5) * dt_dx1;
@@ -162,7 +171,7 @@ void computeNetCrossingLauncher(const T* x, const T* y, const int* flat_netpin,
 /// @param net_mask an array to record whether compute the netcrossing for a net or
 /// not
 std::vector<at::Tensor> net_crossing_forward(at::Tensor pos, at::Tensor flat_netpin,
-                               at::Tensor netpin_start, at::Tensor net_mask,
+                               at::Tensor netpin_start, at::Tensor net_mask, at::Tensor pin_side,
                                at::Tensor lambda, at::Tensor mu, at::Tensor sigma // scalar Tensors
 ) {
   CHECK_FLAT_CPU(pos);
@@ -174,7 +183,8 @@ std::vector<at::Tensor> net_crossing_forward(at::Tensor pos, at::Tensor flat_net
   CHECK_CONTIGUOUS(netpin_start);
   CHECK_FLAT_CPU(net_mask);
   CHECK_CONTIGUOUS(net_mask);
-
+  CHECK_FLAT_CPU(pin_side);
+  CHECK_CONTIGUOUS(pin_side);
 
   int num_nets = netpin_start.numel() - 1;
   int num_pins = pos.numel() / 2;
@@ -188,7 +198,8 @@ std::vector<at::Tensor> net_crossing_forward(at::Tensor pos, at::Tensor flat_net
         DREAMPLACE_TENSOR_DATA_PTR(pos, scalar_t) + num_pins,
         DREAMPLACE_TENSOR_DATA_PTR(flat_netpin, int),
         DREAMPLACE_TENSOR_DATA_PTR(netpin_start, int),
-        DREAMPLACE_TENSOR_DATA_PTR(net_mask, unsigned char), 
+        DREAMPLACE_TENSOR_DATA_PTR(net_mask, unsigned char),
+        DREAMPLACE_TENSOR_DATA_PTR(pin_side, int),
         num_nets,
         DREAMPLACE_TENSOR_DATA_PTR(net_crossing, scalar_t),
         DREAMPLACE_TENSOR_DATA_PTR(lambda, scalar_t),

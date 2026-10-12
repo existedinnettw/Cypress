@@ -48,8 +48,8 @@ class PinPosFunction(Function):
                       flat_node2pin_map, flat_node2pin_start_map, h, w)
         else:
             func = pin_pos_cpp.forward
-            output = func(ctx.pos, pin_offset_x, pin_offset_y, pin2node_map,
-                        flat_node2pin_map, flat_node2pin_start_map)
+            output = func(ctx.pos, pin_offset_x, pin_offset_y, theta, pin2node_map,
+                      flat_node2pin_map, flat_node2pin_start_map, h, w)
         ctx.pin_offset_x = pin_offset_x
         ctx.pin_offset_y = pin_offset_y
         ctx.pin2node_map = pin2node_map
@@ -197,7 +197,10 @@ class PinPos(nn.Module):
                                             self.h, self.w)
         else:
             return PinPosFunction.apply(pos, self.pin_offset_x,
-                                        self.pin_offset_y, self.pin2node_map,
+                                        self.pin_offset_y,
+                                        self.theta,
+                                        self.pin2node_map,
                                         self.flat_node2pin_map,
                                         self.flat_node2pin_start_map,
-                                        self.num_physical_nodes)
+                                        self.num_physical_nodes,
+                                        self.h, self.w)
