@@ -149,8 +149,78 @@ class Keepouts(unittest.TestCase):
         self.assertAlmostEqual(k.cx, 35, places=3)
         self.assertAlmostEqual(k.cy, 23, places=3)
 
+    def test_footprint_keepouts_move_with_the_part(self):
+        board = pcbnew.LoadBoard(BOARD)
+        fp = next(f for f in board.GetFootprints() if len(list(f.Pads())) > 0)
+        fp.SetLocked(False)
+        if fp.IsFlipped():
+            fp.Flip(fp.GetPosition(), pcbnew.FLIP_DIRECTION_LEFT_RIGHT)
+        pos = fp.GetPosition()
+        x0, y0 = pcbnew.ToMM(pos.x) + 5, pcbnew.ToMM(pos.y) - 2
+        zone = pcbnew.ZONE(fp)
+        zone.SetIsRuleArea(True)
+        zone.SetDoNotAllowFootprints(False)
+        zone.SetDoNotAllowPads(True)  # keeps parts out just as well
+        layers = pcbnew.LSET()
+        layers.AddLayer(pcbnew.F_Cu)
+        layers.AddLayer(pcbnew.B_Cu)
+        zone.SetLayerSet(layers)
+        outline = zone.Outline()
+        outline.NewOutline()
+        for dx, dy in ((0, 0), (8, 0), (8, 4), (0, 4)):
+            outline.Append(pcbnew.FromMM(x0 + dx), pcbnew.FromMM(y0 + dy))
+        fp.Add(zone)
 
-class Legalizer(unittest.TestCase):
+        problem = kboard.extract(board, keep_locked=False)
+        comp = next(c for c in problem.components if c.key == kboard.footprint_key(fp))
+        self.assertFalse(comp.fixed)
+        self.assertEqual(len(comp.keepout), 1)
+        self.assertEqual(len(comp.backside_keepout), 1)
+        kx0, ky0, kx1, ky1 = comp.keepout[0]
+        self.assertAlmostEqual(kx1 - kx0, 8, places=3)
+        self.assertAlmostEqual(ky1 - ky0, 4, places=3)
+        self.assertAlmostEqual(comp.cx + kx0, x0, places=3)
+        # a movable part's keep-out is not a global-placement blocker
+        self.assertFalse(any(c.key.startswith("keepout-" + comp.key) for c in problem.components))
+
+        fp.SetLocked(True)
+        problem = kboard.extract(board, keep_locked=True)
+        blockers = [c for c in problem.components if c.key.startswith("keepout-" + kboard.footprint_key(fp))]
+        self.assertEqual(sorted(c.bottom for c in blockers), [False, True])
+
+
+class FootprintKeepouts(unittest.TestCase):
+    def _module(self, **kw):
+        # 10 x 6 module whose 10 x 5 antenna keep-out sticks out above it (y down)
+        return Component(key="U", ref="U", width=10, height=6, cx=0, cy=0, bottom=False,
+                         keepout=[(-5, -8, 5, -3)], **kw)
+
+    def test_parts_stay_out_of_a_keepout(self):
+        u = self._module(fixed=True)
+        c = Component(key="C", ref="C", width=1, height=1, cx=0, cy=0, bottom=False, fixed=False)
+        cb = Component(key="CB", ref="CB", width=1, height=1, cx=0, cy=0, bottom=True, fixed=False)
+        problem = Problem("t", Region(-20, -20, 20, 20), [u, c, cb])
+        self.assertEqual(overlaps(problem, {"C": Placement(0, -6), "CB": Placement(0, -6)}), [("U", "C")])
+        legal, failed = legalize(problem, {"C": Placement(0, -6), "CB": Placement(0, -6)}, grid=0.1)
+        self.assertEqual(failed, [])
+        self.assertEqual(overlaps(problem, legal), [])
+        self.assertEqual((legal["CB"].cx, legal["CB"].cy), (0, -6))  # other side is free
+
+    def test_keepouts_rotate_and_may_overlap_each_other(self):
+        u = self._module(fixed=False)
+        # a quarter turn counterclockwise on screen: the antenna now points left
+        turned = [tuple(round(v, 6) for v in box) for side, box, keepout in Placement(0, 0, 1).shapes(u) if keepout]
+        self.assertEqual(turned, [(-8, -5, -3, 5)])
+        # two modules side by side whose antenna areas overlap, bodies apart
+        v = Component(key="V", ref="V", width=10, height=6, cx=0, cy=0, bottom=False, fixed=False,
+                      keepout=[(-5, -8, 5, -3)])
+        problem = Problem("t", Region(-30, -30, 30, 30), [u, v])
+        sol = {"U": Placement(0, 0), "V": Placement(0, -11, 2)}  # V turned round, antenna down
+        self.assertEqual(overlaps(problem, sol), [])
+        legal, failed = legalize(problem, sol, grid=0.1)
+        self.assertEqual(failed, [])
+        self.assertEqual({k: (p.cx, p.cy) for k, p in legal.items()}, {"U": (0, 0), "V": (0, -11)})
+
     def test_removes_overlaps_and_respects_sides(self):
         rng = random.Random(2)
         comps = [Component(key=str(i), ref="U%d" % i, width=rng.uniform(1, 6), height=rng.uniform(1, 6),
