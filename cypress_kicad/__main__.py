@@ -99,6 +99,10 @@ def cmd_place(args):
     except engine.EngineError as e:
         sys.exit("error: %s" % e)
     print("global placement finished in %.1f s" % (time.time() - t0))
+    overflow = job.unconverged_overflow()
+    if overflow is not None:
+        print("warning: not fully spread after %d iterations (overflow %.3f); "
+              "raise --iterations or lower --target-density" % (settings.iterations, overflow))
 
     if settings.legalize:
         solution, failed = legalize(problem, solution, settings.grid)

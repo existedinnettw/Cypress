@@ -188,6 +188,7 @@ class CypressPlacerPlugin(pcbnew.ActionPlugin):
             if settings.legalize:
                 solution, failed = legalize(problem, solution, settings.grid)
             moved = kboard.apply(board, problem, solution)
+            overflow = job.unconverged_overflow()
         finally:
             progress.Destroy()
             job.cancel()
@@ -196,6 +197,10 @@ class CypressPlacerPlugin(pcbnew.ActionPlugin):
 
         remaining = overlaps(problem, solution)
         msg = "Moved %d footprints." % moved
+        if overflow is not None:
+            msg += ("\nGlobal placement stopped at the iteration limit before parts were "
+                    "spread out (overflow %.3f): raise Max iterations or lower Target density."
+                    % overflow)
         if failed:
             msg += "\nNo free spot for: %s" % ", ".join(failed)
         if remaining:

@@ -11,6 +11,7 @@ import json
 import math
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -276,6 +277,19 @@ class Job:
         if missing:
             raise EngineError("result is missing %d parts, e.g. %s" % (len(missing), ", ".join(missing[:5])))
         return solution
+
+    def unconverged_overflow(self) -> Optional[float]:
+        """Density overflow left when global placement hit its iteration
+        limit before spreading parts out enough, else None."""
+        try:
+            with open(self.log_file, errors="replace") as f:
+                for line in f:
+                    m = re.search(r"overflow is significant ([0-9.]+)", line)
+                    if m:
+                        return float(m.group(1))
+        except OSError:
+            pass
+        return None
 
     def cleanup(self):
         if self.own_workdir:

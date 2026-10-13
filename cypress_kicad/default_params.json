@@ -17,7 +17,7 @@
   "target_density": 0.5095476059649058,
   "density_weight": 0.9757153659163623,
   "net_crossing_flag": true,
-  "net_crossing_weight": 10,
+  "net_crossing_weight": 1,
   "scale_factor": 1.0,
   "ignore_net_weight": 10,
   "shift_factor": [
