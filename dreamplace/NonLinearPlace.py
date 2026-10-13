@@ -1118,7 +1118,15 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                 "overflow is significant %.3f or hpwl is infinity or nan, skip legalization and detail placement steps"
                 % (last_metric.overflow[-1])
             )
-            self.plot(params, placedb, 9999, self.pos[0].data.clone().cpu().numpy())
+            cur_pos = self.pos[0].data.clone().cpu().numpy()
+            self.plot(params, placedb, 9999, cur_pos)
+            # still hand back the global placement; otherwise placedb keeps the
+            # input positions and Placer writes those out as the solution
+            placedb.apply(
+                params,
+                cur_pos[0 : placedb.num_movable_nodes],
+                cur_pos[placedb.num_nodes : placedb.num_nodes + placedb.num_movable_nodes],
+            )
             return float("inf"), float("inf"), processed_metrics
 
         # legalization
