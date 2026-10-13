@@ -90,8 +90,10 @@ Notes:
   or heatsinks.
 - Ground nets (`GND`/`GROUND`, configurable) are left out of wirelength,
   because they are usually connected by planes.
-- Parts stay on the side of the board they are on. Through-hole parts block
-  both sides during legalization.
+- Parts stay on the side of the board they are on. A through-hole part keeps
+  its whole courtyard free on the other side. Unplated holes (alignment pegs),
+  pads with copper on the other outer layer, and courtyards drawn on the other
+  side block the other side too.
 - When the board has no outline, the current spread of parts plus a 10% margin
   is used as the placement region.
 

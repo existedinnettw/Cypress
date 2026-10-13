@@ -7,6 +7,8 @@ position is the centre of its placement box, not the footprint anchor.
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+Box = Tuple[float, float, float, float]  # x0, y0, x1, y1
+
 
 @dataclass
 class Pin:
@@ -26,8 +28,11 @@ class Component:
     cy: float
     bottom: bool
     fixed: bool
-    through_hole: bool = False  # blocks both sides during legalization
     pins: List[Pin] = field(default_factory=list)
+    # what the part occupies on the other side of the board, as boxes relative
+    # to the box centre: its other-side courtyard, drilled holes, and pads
+    # with copper on the other outer layer
+    backside: List[Box] = field(default_factory=list)
 
 
 @dataclass
@@ -69,32 +74,49 @@ class Placement:
             return comp.height, comp.width
         return comp.width, comp.height
 
+    def box(self, comp: Component) -> Box:
+        w, h = self.rotated_size(comp)
+        return (self.cx - w / 2, self.cy - h / 2, self.cx + w / 2, self.cy + h / 2)
+
+    def backside_boxes(self, comp: Component) -> List[Box]:
+        out = []
+        for x0, y0, x1, y1 in comp.backside:
+            # counterclockwise on screen (y down): (dx, dy) -> (dy, -dx)
+            pts = [(x0, y0), (x1, y1)]
+            for _ in range(self.quarter_turns % 4):
+                pts = [(dy, -dx) for dx, dy in pts]
+            xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+            out.append((self.cx + min(xs), self.cy + min(ys), self.cx + max(xs), self.cy + max(ys)))
+        return out
+
 
 Solution = Dict[str, Placement]  # Component.key -> Placement
 
 
+def boxes_overlap(a: Box, b: Box, tol: float = 1e-6) -> bool:
+    return a[0] < b[2] - tol and b[0] < a[2] - tol and a[1] < b[3] - tol and b[1] < a[3] - tol
+
+
 def overlaps(problem: Problem, solution: Optional[Solution] = None, tol: float = 1e-6):
-    """Return pairs of refs whose boxes overlap on the same side.
+    """Return pairs of refs that collide: boxes on the same side, or one
+    part's backside (other-side courtyard, holes, pads) under a part on the
+    other side.
 
     Pairs of two fixed parts are skipped: the placer did not put them there.
     """
-    boxes = []
+    placed = []
     for c in problem.components:
-        p = (solution or {}).get(c.key)
-        if p is None:
-            p = Placement(c.cx, c.cy, 0)
-        w, h = p.rotated_size(c)
-        boxes.append((c, p.cx - w / 2, p.cy - h / 2, p.cx + w / 2, p.cy + h / 2))
+        p = (solution or {}).get(c.key) or Placement(c.cx, c.cy, 0)
+        placed.append((c, p.box(c), p.backside_boxes(c)))
     out = []
-    for i in range(len(boxes)):
-        ci, ax0, ay0, ax1, ay1 = boxes[i]
-        for j in range(i + 1, len(boxes)):
-            cj, bx0, by0, bx1, by1 = boxes[j]
+    for i, (ci, bi, hi) in enumerate(placed):
+        for cj, bj, hj in placed[i + 1:]:
             if ci.fixed and cj.fixed:
                 continue
-            same_side = ci.bottom == cj.bottom or ci.through_hole or cj.through_hole
-            if not same_side:
-                continue
-            if ax0 < bx1 - tol and bx0 < ax1 - tol and ay0 < by1 - tol and by0 < ay1 - tol:
+            if ci.bottom == cj.bottom:
+                hit = boxes_overlap(bi, bj, tol)
+            else:
+                hit = any(boxes_overlap(h, bj, tol) for h in hi) or any(boxes_overlap(h, bi, tol) for h in hj)
+            if hit:
                 out.append((ci.ref, cj.ref))
     return out

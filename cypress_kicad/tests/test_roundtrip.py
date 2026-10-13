@@ -155,8 +155,9 @@ class Legalizer(unittest.TestCase):
         rng = random.Random(2)
         comps = [Component(key=str(i), ref="U%d" % i, width=rng.uniform(1, 6), height=rng.uniform(1, 6),
                            cx=0, cy=0, bottom=i % 4 == 0, fixed=False) for i in range(60)]
+        # a top connector with a drilled peg that also blocks the bottom
         comps.append(Component(key="J1", ref="J1", width=8, height=8, cx=20, cy=20,
-                               bottom=False, fixed=True, through_hole=True))
+                               bottom=False, fixed=True, backside=[(2, 2, 3.5, 3.5)]))
         problem = Problem("t", Region(0, 0, 60, 50), comps)
         sol = {c.key: Placement(30 + rng.uniform(-3, 3), 25 + rng.uniform(-3, 3), rng.randint(0, 3))
                for c in comps if not c.fixed}
@@ -173,6 +174,24 @@ class Legalizer(unittest.TestCase):
             self.assertGreaterEqual(p.cy - h / 2, -1e-6)
             self.assertLessEqual(p.cy + h / 2, 50 + 1e-6)
             self.assertEqual(p.quarter_turns, sol[c.key].quarter_turns)
+
+
+class Holes(unittest.TestCase):
+    def test_holes_block_the_other_side_only_where_drilled(self):
+        # top connector 10 x 4 at (0, 0) with a peg at its right end
+        j = Component(key="J", ref="J", width=10, height=4, cx=0, cy=0, bottom=False, fixed=True,
+                      backside=[(3.5, -0.5, 4.5, 0.5)])
+        c = Component(key="C", ref="C", width=1, height=1, cx=0, cy=0, bottom=True, fixed=False)
+        problem = Problem("t", Region(-20, -20, 20, 20), [j, c])
+        self.assertEqual(overlaps(problem, {"C": Placement(-2, 0)}), [])  # under the body
+        self.assertEqual(overlaps(problem, {"C": Placement(4, 0)}), [("J", "C")])  # under the peg
+        # rotated a quarter turn counterclockwise the peg goes to the top (y down)
+        p = Placement(0, 0, 1)
+        self.assertEqual([tuple(round(v, 6) for v in b) for b in p.backside_boxes(j)], [(-0.5, -4.5, 0.5, -3.5)])
+        legal, failed = legalize(problem, {"C": Placement(4, 0)}, grid=0.1)
+        self.assertEqual(failed, [])
+        self.assertEqual(overlaps(problem, legal), [])
+        self.assertLess(math.hypot(legal["C"].cx - 4, legal["C"].cy), 1.6)
 
 
 if __name__ == "__main__":

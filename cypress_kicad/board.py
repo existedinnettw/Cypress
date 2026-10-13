@@ -87,6 +87,31 @@ def _placement_box(pcbnew, fp):
     return fp.GetBoundingBox(False)
 
 
+def _backside(pcbnew, fp, pads, box, cx, cy, margin):
+    """Boxes (relative to the placement box centre) that the footprint takes
+    on the other side: its other-side courtyard, drilled holes, and pads with
+    copper on the other outer layer (e.g. an exposed pad mirrored to B.Cu).
+    A part with plated through-holes takes its whole courtyard there: leads
+    and solder fillets come out of the other side."""
+    other_cu = pcbnew.F_Cu if fp.IsFlipped() else pcbnew.B_Cu
+    other_crtyd = pcbnew.F_CrtYd if fp.IsFlipped() else pcbnew.B_CrtYd
+    boxes = []
+    if any(p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH for p in pads):
+        boxes.append(box)
+    try:
+        courtyard = fp.GetCourtyard(other_crtyd)
+        boxes += [courtyard.Outline(i).BBox() for i in range(courtyard.OutlineCount())]
+    except AttributeError:
+        pass
+    for pad in pads:
+        drilled = pad.GetAttribute() in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH)
+        if drilled or pad.IsOnLayer(other_cu):
+            boxes.append(pad.GetBoundingBox())  # copper, or the drill of an unplated hole
+    return [(_mm(pcbnew, b.GetLeft()) - cx - margin, _mm(pcbnew, b.GetTop()) - cy - margin,
+             _mm(pcbnew, b.GetRight()) - cx + margin, _mm(pcbnew, b.GetBottom()) - cy + margin)
+            for b in boxes]
+
+
 def _keepouts(pcbnew, board):
     """Rule areas that forbid footprints, as fixed pinless blockers per side.
 
@@ -148,8 +173,8 @@ def extract(board, name: Optional[str] = None, selected_only: bool = False,
             cy=cy,
             bottom=bool(fp.IsFlipped()),
             fixed=bool(fixed),
-            through_hole=any(p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH for p in pads),
         )
+        comp.backside = _backside(pcbnew, fp, pads, box, cx, cy, spacing / 2)
         for pad in pads:
             net = pad.GetNetname()
             if pad.GetNetCode() <= 0 or not net or (ignore and ignore.search(net)):
