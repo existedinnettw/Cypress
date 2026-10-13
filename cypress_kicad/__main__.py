@@ -48,6 +48,21 @@ def _add_settings_args(p):
     g.add_argument("--legalize", action=argparse.BooleanOptionalAction, default=d.legalize,
                    help="remove remaining overlaps after global placement")
     g.add_argument("--grid", type=float, default=d.grid, help="legalization grid (mm)")
+    g = p.add_argument_group("engine parameters")
+    g.add_argument("--param", dest="params", action="append", type=_param, default=None,
+                   metavar="KEY=VALUE",
+                   help="override a default_params.json key; VALUE is JSON (repeatable)")
+
+
+def _param(text):
+    import json
+    key, sep, value = text.partition("=")
+    if not sep or not key:
+        raise argparse.ArgumentTypeError("expected KEY=VALUE, got %r" % text)
+    try:
+        return key, json.loads(value)
+    except ValueError:
+        return key, value
 
 
 def _settings(args) -> Settings:
@@ -55,6 +70,7 @@ def _settings(args) -> Settings:
     for f in fields(Settings):
         if hasattr(args, f.name):
             setattr(s, f.name, getattr(args, f.name))
+    s.params = dict(s.params or [])
     return s
 
 

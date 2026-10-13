@@ -366,9 +366,12 @@ class PlaceObj(nn.Module):
             self.op_collections.pin_utilization_map_op = self.build_pin_utilization_map(
                 params, placedb, self.data_collections
             )
-            self.op_collections.nctugr_congestion_map_op = (
-                self.build_nctugr_congestion_map(params, placedb, self.data_collections)
-            )
+            # NCTUgr needs per-layer routing capacities from LEF/DEF route
+            # info; Bookshelf (PCB) inputs have none, so only build it when used
+            if params.adjust_nctugr_area_flag:
+                self.op_collections.nctugr_congestion_map_op = (
+                    self.build_nctugr_congestion_map(params, placedb, self.data_collections)
+                )
             # adjust instance area with congestion map
             self.op_collections.adjust_node_area_op = self.build_adjust_node_area(
                 params, placedb, self.data_collections

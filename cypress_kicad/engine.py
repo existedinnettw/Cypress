@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from typing import Callable, List, Optional
 
 from .bookshelf import BookshelfDesign
@@ -57,6 +57,9 @@ class Settings:
     # post-processing
     legalize: bool = True
     grid: float = 0.1  # mm
+    # raw engine parameters (default_params.json keys) applied last, for
+    # experiments, e.g. {"routability_opt_flag": 1}
+    params: dict = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: str = SETTINGS_PATH) -> "Settings":
@@ -144,6 +147,7 @@ def make_config(problem: Problem, design: BookshelfDesign, settings: Settings,
         detailed_place_flag=0,
         plot_flag=0,
     )
+    cfg.update(settings.params or {})
     return cfg
 
 
