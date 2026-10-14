@@ -24,15 +24,18 @@ int globalSwapCUDALauncher(DetailedPlaceDB<T> db, int batch_size, int max_iters,
 
 /// I remove the support to Char, since int8_t does not compile for CUDA
 /// char does not compile for ATen either
-#define DISPATCH_CUSTOM_TYPES(TYPE, NAME, ...)                                    \
-  [&] {                                                                           \
-    switch (TYPE) {                                                               \
-      DREAMPLACE_PRIVATE_CASE_TYPE(NAME, at::ScalarType::Float, float, __VA_ARGS__)   \
-      DREAMPLACE_PRIVATE_CASE_TYPE(NAME, at::ScalarType::Double, double, __VA_ARGS__) \
-      DREAMPLACE_PRIVATE_CASE_TYPE(NAME, at::ScalarType::Int, int, __VA_ARGS__)       \
-      default:                                                                    \
-        AT_ERROR(#NAME, " not implemented for '", at::toString(TYPE), "'");       \
-    }                                                                             \
+#define DISPATCH_CUSTOM_TYPES(TYPE, NAME, ...)                                 \
+  [&] {                                                                        \
+    switch (TYPE) {                                                            \
+      DREAMPLACE_PRIVATE_CASE_TYPE(NAME, at::ScalarType::Float, float,         \
+                                   __VA_ARGS__)                                \
+      DREAMPLACE_PRIVATE_CASE_TYPE(NAME, at::ScalarType::Double, double,       \
+                                   __VA_ARGS__)                                \
+      DREAMPLACE_PRIVATE_CASE_TYPE(NAME, at::ScalarType::Int, int,             \
+                                   __VA_ARGS__)                                \
+    default:                                                                   \
+      AT_ERROR(#NAME, " not implemented for '", at::toString(TYPE), "'");      \
+    }                                                                          \
   }()
 
 at::Tensor global_swap_cuda_forward(

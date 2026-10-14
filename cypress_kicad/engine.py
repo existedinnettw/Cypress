@@ -212,8 +212,9 @@ class Job:
         threading.Thread(target=self._pump, daemon=True).start()
 
     def _pump(self):
-        for line in self.proc.stdout:
-            self.lines.put(line.rstrip())
+        with self.proc.stdout:
+            for line in self.proc.stdout:
+                self.lines.put(line.rstrip())
 
     def _tail_log(self):
         # Placer.py logs to DREAMPlace.log only, so follow the file for progress
