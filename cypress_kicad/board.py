@@ -112,15 +112,42 @@ def _backside(pcbnew, fp, pads, box, cx, cy, margin):
             for b in boxes]
 
 
+def _forbids_parts(zone):
+    """A rule area that forbids footprints, or pads (which every placed part
+    has), keeps parts out."""
+    return zone.GetIsRuleArea() and (zone.GetDoNotAllowFootprints() or zone.GetDoNotAllowPads())
+
+
+def _footprint_keepouts(pcbnew, fp, cx, cy):
+    """Keep-out areas the footprint carries, relative to the placement box
+    centre, as (own side, other side) box lists. A non-rectangular area
+    blocks its bounding box."""
+    own_cu = pcbnew.B_Cu if fp.IsFlipped() else pcbnew.F_Cu
+    other_cu = pcbnew.F_Cu if fp.IsFlipped() else pcbnew.B_Cu
+    own, other = [], []
+    for zone in fp.Zones():
+        if not _forbids_parts(zone):
+            continue
+        b = zone.GetBoundingBox()
+        rel = (_mm(pcbnew, b.GetLeft()) - cx, _mm(pcbnew, b.GetTop()) - cy,
+               _mm(pcbnew, b.GetRight()) - cx, _mm(pcbnew, b.GetBottom()) - cy)
+        layers = zone.GetLayerSet()
+        if layers.Contains(own_cu):
+            own.append(rel)
+        if layers.Contains(other_cu):
+            other.append(rel)
+    return own, other
+
+
 def _keepouts(pcbnew, board):
-    """Rule areas that forbid footprints, as fixed pinless blockers per side.
+    """Rule areas that keep parts out, as fixed pinless blockers per side.
 
     The placer only knows boxes, so a non-rectangular area blocks its
     bounding box.
     """
     out = []
     for i, zone in enumerate(board.Zones()):
-        if not (zone.GetIsRuleArea() and zone.GetDoNotAllowFootprints()):
+        if not _forbids_parts(zone):
             continue
         box = zone.GetBoundingBox()
         layers = zone.GetLayerSet()
@@ -136,7 +163,32 @@ def _keepouts(pcbnew, board):
                 cy=_mm(pcbnew, box.GetCenter().y),
                 bottom=side == "bottom",
                 fixed=True,
+                is_keepout=True,
             ))
+    return out
+
+
+def _fixed_part_keepouts(comps, region):
+    """Keep-outs of fixed parts as fixed pinless blockers, clipped to the
+    placement region, so global placement already spreads parts away from
+    them instead of leaving it all to the legalizer. (A movable part's
+    keep-outs move with it and are only enforced when legalizing.)"""
+    out = []
+    for c in comps:
+        if not c.fixed:
+            continue
+        for own, boxes in ((True, c.keepout), (False, c.backside_keepout)):
+            for i, (x0, y0, x1, y1) in enumerate(boxes):
+                x0, x1 = max(c.cx + x0, region.left), min(c.cx + x1, region.right)
+                y0, y1 = max(c.cy + y0, region.top), min(c.cy + y1, region.bottom)
+                if x1 - x0 <= 0 or y1 - y0 <= 0:
+                    continue
+                bottom = c.bottom if own else not c.bottom
+                out.append(Component(
+                    key="keepout-%s-%d-%s" % (c.key, i, "bottom" if bottom else "top"),
+                    ref="keepout of %s (%s)" % (c.ref, "bottom" if bottom else "top"),
+                    width=x1 - x0, height=y1 - y0, cx=(x0 + x1) / 2, cy=(y0 + y1) / 2,
+                    bottom=bottom, fixed=True, is_keepout=True))
     return out
 
 
@@ -175,6 +227,7 @@ def extract(board, name: Optional[str] = None, selected_only: bool = False,
             fixed=bool(fixed),
         )
         comp.backside = _backside(pcbnew, fp, pads, box, cx, cy, spacing / 2)
+        comp.keepout, comp.backside_keepout = _footprint_keepouts(pcbnew, fp, cx, cy)
         for pad in pads:
             net = pad.GetNetname()
             if pad.GetNetCode() <= 0 or not net or (ignore and ignore.search(net)):
@@ -209,6 +262,8 @@ def extract(board, name: Optional[str] = None, selected_only: bool = False,
         region = Region(x0 - mx, y0 - my, x1 + mx, y1 + my)
     if region.width <= 0 or region.height <= 0:
         raise ValueError("Placement region is empty; check the board outline and edge clearance")
+
+    comps += _fixed_part_keepouts(comps, region)
 
     if not name:
         name = os.path.splitext(os.path.basename(board.GetFileName() or "board"))[0]

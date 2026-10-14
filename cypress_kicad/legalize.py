@@ -5,8 +5,9 @@ This pass keeps each part as close as possible to where the placer put it:
 largest parts first, each moved to the nearest grid position (Euclidean) that
 does not overlap anything already placed on the same side. What a part
 occupies on the other side (its other-side courtyard, holes, pads) blocks
-that side too. Pure Python so it runs inside KiCad's
-interpreter.
+that side too, and keep-out areas a footprint carries (e.g. a module's
+antenna area) block every other part; keep-outs may overlap each other. Pure
+Python so it runs inside KiCad's interpreter.
 """
 
 import math
@@ -21,7 +22,7 @@ EPS = 1e-6
 class _Occupancy:
     def __init__(self, bucket: float):
         self.bucket = bucket
-        self.cells: Dict[Tuple[int, int, int], List[Box]] = defaultdict(list)
+        self.cells: Dict[Tuple[int, int, int], List[Tuple[Box, bool]]] = defaultdict(list)
 
     def _keys(self, box: Box, side: int):
         b = self.bucket
@@ -29,28 +30,27 @@ class _Occupancy:
             for iy in range(math.floor(box[1] / b), math.floor(box[3] / b) + 1):
                 yield side, ix, iy
 
-    def add(self, box: Box, side: int):
+    def add(self, box: Box, side: int, keepout: bool = False):
         for key in self._keys(box, side):
-            self.cells[key].append(box)
+            self.cells[key].append((box, keepout))
 
-    def free(self, box: Box, side: int) -> bool:
+    def free(self, box: Box, side: int, keepout: bool = False) -> bool:
         for key in self._keys(box, side):
-            for o in self.cells.get(key, ()):
+            for o, o_keepout in self.cells.get(key, ()):
+                if keepout and o_keepout:
+                    continue  # keep-out areas may overlap each other
                 if box[0] < o[2] - EPS and o[0] < box[2] - EPS and box[1] < o[3] - EPS and o[1] < box[3] - EPS:
                     return False
         return True
 
 
 def _fits(occ, comp, place) -> bool:
-    side = int(comp.bottom)
-    return occ.free(place.box(comp), side) and all(occ.free(h, 1 - side) for h in place.backside_boxes(comp))
+    return all(occ.free(box, side, keepout) for side, box, keepout in place.shapes(comp))
 
 
 def _take(occ, comp, place):
-    side = int(comp.bottom)
-    occ.add(place.box(comp), side)
-    for h in place.backside_boxes(comp):
-        occ.add(h, 1 - side)
+    for side, box, keepout in place.shapes(comp):
+        occ.add(box, side, keepout)
 
 
 def legalize(problem: Problem, solution: Solution, grid: float = 0.1):
