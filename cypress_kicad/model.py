@@ -39,6 +39,10 @@ class Component:
     # and may reach past the board outline.
     keepout: List[Box] = field(default_factory=list)
     backside_keepout: List[Box] = field(default_factory=list)
+    # the component is itself a keep-out area (a board rule area, or a fixed
+    # part's keep-out handed to global placement): it blocks parts but may
+    # overlap other keep-outs
+    is_keepout: bool = False
 
 
 @dataclass
@@ -91,7 +95,7 @@ class Placement:
         """Everything the part occupies as (side, box, is_keepout); side 0 is
         top, 1 is bottom."""
         side = int(comp.bottom)
-        out = [(side, self.box(comp), False)]
+        out = [(side, self.box(comp), comp.is_keepout)]
         out += [(1 - side, b, False) for b in self._turn(comp.backside)]
         out += [(side, b, True) for b in self._turn(comp.keepout)]
         out += [(1 - side, b, True) for b in self._turn(comp.backside_keepout)]

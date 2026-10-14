@@ -221,6 +221,23 @@ class FootprintKeepouts(unittest.TestCase):
         self.assertEqual(failed, [])
         self.assertEqual({k: (p.cx, p.cy) for k, p in legal.items()}, {"U": (0, 0), "V": (0, -11)})
 
+    def test_keepout_blockers_may_overlap_other_keepouts(self):
+        # a fixed module's keep-out handed to global placement as a blocker
+        blocker = Component(key="kb", ref="keepout of U", width=10, height=5, cx=0, cy=-5.5,
+                            bottom=False, fixed=True, is_keepout=True)
+        # a movable module whose own keep-out reaches into it, bodies apart
+        v = Component(key="V", ref="V", width=10, height=6, cx=0, cy=0, bottom=False, fixed=False,
+                      keepout=[(-5, -8, 5, -3)])
+        c = Component(key="C", ref="C", width=1, height=1, cx=0, cy=0, bottom=False, fixed=False)
+        problem = Problem("t", Region(-30, -30, 30, 30), [blocker, v, c])
+        sol = {"V": Placement(0, -11, 2), "C": Placement(0, -5)}
+        self.assertEqual(overlaps(problem, {"V": sol["V"], "C": Placement(20, 20)}), [])
+        self.assertEqual(overlaps(problem, sol), [("keepout of U", "C"), ("V", "C")])
+        legal, failed = legalize(problem, {"V": sol["V"]}, grid=0.1)
+        self.assertEqual((legal["V"].cx, legal["V"].cy), (0, -11))
+
+
+class Legalizer(unittest.TestCase):
     def test_removes_overlaps_and_respects_sides(self):
         rng = random.Random(2)
         comps = [Component(key=str(i), ref="U%d" % i, width=rng.uniform(1, 6), height=rng.uniform(1, 6),
@@ -262,6 +279,20 @@ class Holes(unittest.TestCase):
         self.assertEqual(failed, [])
         self.assertEqual(overlaps(problem, legal), [])
         self.assertLess(math.hypot(legal["C"].cx - 4, legal["C"].cy), 1.6)
+
+
+class Params(unittest.TestCase):
+    def test_param_overrides_merge_over_saved_ones(self):
+        from unittest import mock
+        from cypress_kicad import __main__ as cli
+        from cypress_kicad.engine import Settings
+        saved = Settings(params={"a": 1, "b": 2})
+        with mock.patch.object(Settings, "load", return_value=saved):
+            p = cli.argparse.ArgumentParser()
+            cli._add_settings_args(p)
+            self.assertEqual(cli._settings(p.parse_args([])).params, {"a": 1, "b": 2})
+            self.assertEqual(cli._settings(p.parse_args(["--param", "b=3", "--param", "c=[1]"])).params,
+                             {"a": 1, "b": 3, "c": [1]})
 
 
 if __name__ == "__main__":

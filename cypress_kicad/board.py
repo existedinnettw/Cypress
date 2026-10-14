@@ -163,6 +163,7 @@ def _keepouts(pcbnew, board):
                 cy=_mm(pcbnew, box.GetCenter().y),
                 bottom=side == "bottom",
                 fixed=True,
+                is_keepout=True,
             ))
     return out
 
@@ -187,7 +188,7 @@ def _fixed_part_keepouts(comps, region):
                     key="keepout-%s-%d-%s" % (c.key, i, "bottom" if bottom else "top"),
                     ref="keepout of %s (%s)" % (c.ref, "bottom" if bottom else "top"),
                     width=x1 - x0, height=y1 - y0, cx=(x0 + x1) / 2, cy=(y0 + y1) / 2,
-                    bottom=bottom, fixed=True))
+                    bottom=bottom, fixed=True, is_keepout=True))
     return out
 
 

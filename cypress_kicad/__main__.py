@@ -51,7 +51,8 @@ def _add_settings_args(p):
     g = p.add_argument_group("engine parameters")
     g.add_argument("--param", dest="params", action="append", type=_param, default=None,
                    metavar="KEY=VALUE",
-                   help="override a default_params.json key; VALUE is JSON (repeatable)")
+                   help="override a default_params.json key; VALUE is JSON (repeatable); "
+                        "merged over the parameters saved in the settings")
 
 
 def _param(text):
@@ -68,9 +69,11 @@ def _param(text):
 def _settings(args) -> Settings:
     s = Settings()
     for f in fields(Settings):
-        if hasattr(args, f.name):
+        if hasattr(args, f.name) and f.name != "params":
             setattr(s, f.name, getattr(args, f.name))
-    s.params = dict(s.params or [])
+    # --param adds to the saved parameters instead of replacing them
+    s.params = dict(Settings.load().params or {})
+    s.params.update(getattr(args, "params", None) or [])
     return s
 
 
