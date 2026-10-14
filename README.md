@@ -85,9 +85,18 @@ Notes:
 - Footprints with no connected nets (mounting holes, fiducials) stay where
   they are, as do locked footprints. Lock edge connectors and other parts
   whose position is set by the enclosure before you run the placer.
-- Rule areas set to disallow footprints are treated as keep-outs on their
-  copper layers (by bounding box). Use them for areas under modules, cards
-  or heatsinks.
+- Rule areas set to disallow footprints (or pads) are treated as keep-outs on
+  their copper layers (by bounding box). Use them for areas under modules,
+  cards or heatsinks. Rule areas inside a footprint (a module's antenna area)
+  move with the part and keep other parts out.
+- Isolation domains: a custom rule such as
+  `A.NetClass == 'Logic*' && B.NetClass != 'Logic*'` with a clearance splits
+  the parts into two domains plus bridges (isolators, optocouplers). If the
+  smaller domain has its own copper pour covering part of the board (an
+  isolated ground island), placement runs twice: the other domain is kept the
+  rule's gap away from that pour, then the smaller domain and the bridges are
+  placed inside it (bridges may straddle a 3 mm band). Without such a pour the
+  domains are reported but not enforced. `--no-domains` turns this off.
 - Ground nets (`GND`/`GROUND`, configurable) are left out of wirelength,
   because they are usually connected by planes.
 - Parts stay on the side of the board they are on. A through-hole part keeps

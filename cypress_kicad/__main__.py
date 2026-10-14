@@ -48,6 +48,9 @@ def _add_settings_args(p):
     g.add_argument("--legalize", action=argparse.BooleanOptionalAction, default=d.legalize,
                    help="remove remaining overlaps after global placement")
     g.add_argument("--grid", type=float, default=d.grid, help="legalization grid (mm)")
+    g.add_argument("--domains", action=argparse.BooleanOptionalAction, default=d.domains,
+                   help="keep isolation domains from the board's custom rules apart, inside the "
+                        "region the designer drew for them (two placement passes)")
     g = p.add_argument_group("engine parameters")
     g.add_argument("--param", dest="params", action="append", type=_param, default=None,
                    metavar="KEY=VALUE",
@@ -90,7 +93,7 @@ def _load(path, settings, refs=None):
                 fp.ClearSelected()
     problem = extract(board, selected_only=bool(refs), ignore_nets=settings.ignore_nets,
                       spacing=settings.spacing, edge_clearance=settings.edge_clearance,
-                      keep_locked=settings.keep_locked)
+                      keep_locked=settings.keep_locked, domains=settings.domains)
     return board, problem
 
 
@@ -108,25 +111,45 @@ def cmd_place(args):
         problem.name, len(problem.components), len(problem.movable()),
         problem.region.width, problem.region.height))
 
-    job = engine.Job(problem, settings, args.workdir)
-    t0 = time.time()
-    job.start()
-    code = job.wait(on_line=print if args.verbose else _progress)
-    print()
-    try:
-        solution = job.result()
-    except engine.EngineError as e:
-        sys.exit("error: %s" % e)
-    print("global placement finished in %.1f s" % (time.time() - t0))
-    overflow = job.unconverged_overflow()
-    if overflow is not None:
-        print("warning: not fully spread after %d iterations (overflow %.3f); "
-              "raise --iterations or lower --target-density" % (settings.iterations, overflow))
+    from . import domains
 
-    if settings.legalize:
-        solution, failed = legalize(problem, solution, settings.grid)
-        if failed:
-            print("warning: could not find a free spot for %s" % ", ".join(failed))
+    jobs = []
+
+    def solve(prob):
+        """Global placement, then legalization, of one problem."""
+        workdir = args.workdir and (os.path.join(args.workdir, "pass%d" % (len(jobs) + 1))
+                                    if domains.enforced(problem) else args.workdir)
+        job = engine.Job(prob, settings, workdir)
+        jobs.append(job)
+        if domains.enforced(problem):
+            print("pass %d: %s" % (len(jobs), "outer domain, kept out of the inner region" if len(jobs) == 1
+                                   else "inner domain and bridges, inside the region"))
+        t0 = time.time()
+        job.start()
+        job.wait(on_line=print if args.verbose else _progress)
+        print()
+        try:
+            sol = job.result()
+        except engine.EngineError as e:
+            sys.exit("error: %s" % e)
+        print("global placement finished in %.1f s" % (time.time() - t0))
+        overflow = job.unconverged_overflow()
+        if overflow is not None:
+            print("warning: not fully spread after %d iterations (overflow %.3f); "
+                  "raise --iterations or lower --target-density" % (settings.iterations, overflow))
+        if settings.legalize:
+            sol, failed = legalize(prob, sol, settings.grid)
+            if failed:
+                print("warning: could not find a free spot for %s" % ", ".join(failed))
+        return sol
+
+    if problem.domains:
+        print(domains.summary(problem))
+    if domains.enforced(problem):
+        solution = domains.place(problem, solve)
+    else:
+        solution = solve(problem)
+    code = 0
     left = overlaps(problem, solution)
     print("overlapping pairs involving moved parts: %d" % len(left))
 
@@ -135,9 +158,10 @@ def cmd_place(args):
     board.Save(out)
     print("moved %d footprints, wrote %s" % (moved, out))
     if args.workdir is None:
-        job.cleanup()
+        for job in jobs:
+            job.cleanup()
     else:
-        print("engine files kept in", job.workdir)
+        print("engine files kept in", args.workdir)
     return code
 
 
