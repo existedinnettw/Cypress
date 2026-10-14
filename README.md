@@ -97,6 +97,16 @@ Notes:
 - When the board has no outline, the current spread of parts plus a 10% margin
   is used as the placement region.
 
+### Tests
+
+```sh
+# KiCad side (needs pcbnew; the engine test also needs the docker image or a local build)
+python3 -m unittest discover -s cypress_kicad/tests -t .
+# engine ops against the docker image's build (CUDA cases run when a GPU is visible)
+docker run --rm -v $PWD/unittest/ops:/Cypress/install/t/ops:ro -w /Cypress/install cypress:cpu \
+  sh -c "python3 t/ops/pin_pos_unittest.py && python3 t/ops/net_crossing_unittest.py"
+```
+
 ## Run Hyperparameter search
 
 ```sh
