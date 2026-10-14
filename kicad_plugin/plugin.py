@@ -7,6 +7,7 @@ import pcbnew
 import wx
 
 from cypress_kicad import board as kboard
+from cypress_kicad import domains
 from cypress_kicad import engine
 from cypress_kicad.engine import Settings
 from cypress_kicad.legalize import legalize
@@ -31,6 +32,9 @@ FIELDS = [
     ("target_density", "Target density", "float", "0.3 (spread out) .. 1.0 (packed)"),
     ("rotation", "Allow 90° rotations", "bool", None),
     ("net_crossing", "Minimise ratsnest crossings", "bool", None),
+    ("domains", "Keep isolation domains apart", "bool",
+     "From a custom rule like A.NetClass == 'Logic*' && B.NetClass != 'Logic*': the smaller domain "
+     "stays inside its own partial copper pour, the other keeps the rule's gap (two passes)"),
     ("keep_initial", "Start from current positions", "bool", "Otherwise start from the board centre"),
     ("seed", "Random seed", "int", None),
     ("ignore_nets", "Ignore nets (regex)", "str", "Nets left out of wirelength, typically ground planes"),
@@ -39,6 +43,10 @@ FIELDS = [
     ("legalize", "Remove overlaps afterwards", "bool", None),
     ("grid", "Legalization grid (mm)", "float", None),
 ]
+
+
+class _Cancelled(Exception):
+    pass
 
 
 class SettingsDialog(wx.Dialog):
@@ -152,14 +160,24 @@ class CypressPlacerPlugin(pcbnew.ActionPlugin):
         problem = kboard.extract(
             board, selected_only=settings.selected_only, ignore_nets=settings.ignore_nets,
             spacing=settings.spacing, edge_clearance=settings.edge_clearance,
-            keep_locked=settings.keep_locked)
-        job = engine.Job(problem, settings)
+            keep_locked=settings.keep_locked, domains=settings.domains)
+        two_pass = domains.enforced(problem)
         log = []
+        jobs = []
+        failed = []
+        overflow = None
         progress = wx.ProgressDialog(
             "Cypress Placer", "Placing %d footprints..." % len(problem.movable()),
             maximum=max(1, settings.iterations), parent=parent,
             style=wx.PD_CAN_ABORT | wx.PD_APP_MODAL | wx.PD_ELAPSED_TIME | wx.PD_AUTO_HIDE)
-        try:
+
+        def solve(prob):
+            """Global placement and legalization of one problem; one pass of
+            two when isolation domains are enforced."""
+            nonlocal overflow
+            job = engine.Job(prob, settings)
+            jobs.append(job)
+            label = ("Pass %d of 2: " % len(jobs)) if two_pass else ""
             job.start()
             done = 0
             while True:
@@ -169,34 +187,43 @@ class CypressPlacerPlugin(pcbnew.ActionPlugin):
                     m = re.search(r"iteration\s+(\d+).*?HPWL\s+(\S+)", line)
                     if m:
                         done = min(int(m.group(1)), settings.iterations - 1)
-                        msg = "Iteration %s, HPWL %s" % (m.group(1), m.group(2))
-                        progress.Update(done, msg)
+                        progress.Update(done, "%sIteration %s, HPWL %s" % (label, m.group(1), m.group(2)))
                 if code is not None:
                     break
                 keep_going, _ = progress.Update(done)
                 if not keep_going:
                     job.cancel()
-                    return
+                    raise _Cancelled()
                 time.sleep(0.1)
-            progress.Update(settings.iterations - 1, "Applying placement...")
             try:
-                solution = job.result()
+                sol = job.result()
             except engine.EngineError as e:
                 tail = "\n".join(log[-15:])
                 raise engine.EngineError("%s\n\n%s" % (e, tail))
-            failed = []
+            if job.unconverged_overflow() is not None:
+                overflow = job.unconverged_overflow()
             if settings.legalize:
-                solution, failed = legalize(problem, solution, settings.grid)
+                sol, f = legalize(prob, sol, settings.grid)
+                failed.extend(f)
+            return sol
+
+        try:
+            solution = domains.place(problem, solve) if two_pass else solve(problem)
+            progress.Update(settings.iterations - 1, "Applying placement...")
             moved = kboard.apply(board, problem, solution)
-            overflow = job.unconverged_overflow()
+        except _Cancelled:
+            return
         finally:
             progress.Destroy()
-            job.cancel()
-            job.cleanup()
+            for job in jobs:
+                job.cancel()
+                job.cleanup()
         pcbnew.Refresh()
 
         remaining = overlaps(problem, solution)
         msg = "Moved %d footprints." % moved
+        if problem.domains:
+            msg += "\n" + domains.summary(problem)
         if overflow is not None:
             msg += ("\nGlobal placement stopped at the iteration limit before parts were "
                     "spread out (overflow %.3f): raise Max iterations or lower Target density."

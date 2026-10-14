@@ -57,6 +57,8 @@ class Settings:
     # post-processing
     legalize: bool = True
     grid: float = 0.1  # mm
+    # keep isolation domains apart as the board's custom rules say (domains.py)
+    domains: bool = True
     # raw engine parameters (default_params.json keys) applied last, for
     # experiments, e.g. {"routability_opt_flag": 1}
     params: dict = field(default_factory=dict)

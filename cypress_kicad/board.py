@@ -11,6 +11,7 @@ import shutil
 import sys
 from typing import Optional
 
+from . import domains as dom
 from .model import Component, Pin, Problem, Region, Solution
 
 
@@ -192,9 +193,46 @@ def _fixed_part_keepouts(comps, region):
     return out
 
 
+def _barrier(board):
+    """(rule, class pattern, gap) from the board's .kicad_dru, or None."""
+    path = os.path.splitext(board.GetFileName() or "")[0] + ".kicad_dru"
+    try:
+        with open(path, encoding="utf-8") as f:
+            return dom.read_barrier(f.read())
+    except OSError:
+        return None
+
+
+def _domains(pcbnew, board, barrier, comps, region):
+    """Domains with the inner one's region: the copper pours on inner-domain
+    nets that cover only part of the board, as rectangles."""
+    name, pattern, gap = barrier
+    area = {"in": 0.0, "out": 0.0}
+    for c in comps:
+        if c.domain in area:
+            area[c.domain] += c.width * c.height
+    inner = "in" if area["in"] <= area["out"] else "out"
+    board_area = region.width * region.height
+    outlines = []
+    for z in board.Zones():
+        if z.GetIsRuleArea() or z.GetNetCode() <= 0:
+            continue
+        if dom.in_class(z.GetNet().GetNetClassName(), pattern) != (inner == "in"):
+            continue
+        if z.Outline().Area() / 1e12 < 0.8 * board_area:  # a board-wide pour says nothing
+            outlines.append(z.Outline())
+    rects = []
+    if outlines:
+        inside = lambda x, y: any(o.Contains(pcbnew.VECTOR2I(_nm(pcbnew, x), _nm(pcbnew, y)))
+                                  for o in outlines)
+        rects = dom.rects_of(inside, (region.left, region.top, region.right, region.bottom))
+    return dom.Domains(rule=name, pattern=pattern, gap=gap, inner=inner, region=rects)
+
+
 def extract(board, name: Optional[str] = None, selected_only: bool = False,
             ignore_nets: str = r"(?i)GND|GROUND", spacing: float = 0.0,
-            edge_clearance: float = 0.0, keep_locked: bool = True) -> Problem:
+            edge_clearance: float = 0.0, keep_locked: bool = True,
+            domains: bool = True) -> Problem:
     """Build the placement problem for ``board``.
 
     selected_only   only selected footprints move; all others are fixed
@@ -202,12 +240,15 @@ def extract(board, name: Optional[str] = None, selected_only: bool = False,
     spacing         extra gap (mm) kept between component boxes
     edge_clearance  gap (mm) kept between components and the board outline
     keep_locked     locked footprints are fixed obstacles
+    domains         read isolation domains from the board's custom rules
+                    (see domains.py)
 
     Footprints without any (non-ignored) net are always fixed.
     """
     import pcbnew
 
     ignore = re.compile(ignore_nets) if ignore_nets else None
+    barrier = _barrier(board) if domains else None
     comps = []
     for fp in board.GetFootprints():
         pads = list(fp.Pads())
@@ -228,6 +269,10 @@ def extract(board, name: Optional[str] = None, selected_only: bool = False,
         )
         comp.backside = _backside(pcbnew, fp, pads, box, cx, cy, spacing / 2)
         comp.keepout, comp.backside_keepout = _footprint_keepouts(pcbnew, fp, cx, cy)
+        if barrier:
+            comp.domain = dom.domain_of({
+                "in" if dom.in_class(p.GetNetClassName(), barrier[1]) else "out"
+                for p in pads if p.GetNetCode() > 0 and not p.GetNetname().startswith("unconnected-")})
         for pad in pads:
             net = pad.GetNetname()
             if pad.GetNetCode() <= 0 or not net or (ignore and ignore.search(net)):
@@ -264,11 +309,12 @@ def extract(board, name: Optional[str] = None, selected_only: bool = False,
         raise ValueError("Placement region is empty; check the board outline and edge clearance")
 
     comps += _fixed_part_keepouts(comps, region)
+    domains_ = _domains(pcbnew, board, barrier, comps, region) if barrier else None
 
     if not name:
         name = os.path.splitext(os.path.basename(board.GetFileName() or "board"))[0]
     name = re.sub(r"[^A-Za-z0-9_]", "_", name) or "board"
-    return Problem(name=name, region=region, components=comps)
+    return Problem(name=name, region=region, components=comps, domains=domains_)
 
 
 def apply(board, problem: Problem, solution: Solution) -> int:

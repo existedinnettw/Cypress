@@ -43,6 +43,9 @@ class Component:
     # part's keep-out handed to global placement): it blocks parts but may
     # overlap other keep-outs
     is_keepout: bool = False
+    # isolation domain (see domains.py): "in" (nets in the barrier rule's
+    # class), "out", "bridge" (pads in both, e.g. an isolator), or None
+    domain: Optional[str] = None
 
 
 @dataclass
@@ -66,6 +69,7 @@ class Problem:
     name: str
     region: Region
     components: List[Component]
+    domains: Optional["Domains"] = None  # noqa: F821 (domains.Domains)
 
     def movable(self) -> List[Component]:
         return [c for c in self.components if not c.fixed]
