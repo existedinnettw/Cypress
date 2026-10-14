@@ -39,6 +39,19 @@ class Rules(unittest.TestCase):
                                          '(condition "A.NetClass == \'L\' && B.NetClass != \'L\'") '
                                          '(constraint clearance (min 1mm)))'))
 
+    def test_extra_predicates_make_it_no_barrier(self):
+        scoped = RULES.replace("&& B.NetClass != 'Logic*'\")", "&& B.NetClass != 'Logic*' && A.Layer == 'F.Cu'\")")
+        self.assertEqual(D.read_barrier(scoped)[1], "HV")
+        either = RULES.replace("(condition \"A.NetClass == 'Logic*' && B.NetClass != 'Logic*'\")",
+                               "(condition \"(A.NetClass == 'Logic*') && (B.NetClass != 'Logic*')\")")
+        self.assertEqual(D.read_barrier(either)[1], "Logic*")
+
+    def test_units(self):
+        self.assertAlmostEqual(D.read_barrier(RULES.replace("0.75mm", "40mil"))[2], 1.016)
+        self.assertEqual(D.read_barrier(RULES.replace("0.75mm", "0.05in"))[2], 1.27)
+        # KiCad rejects the whole rules file over a value without a unit
+        self.assertEqual(D.read_barrier(RULES.replace("0.75mm", "750000"))[1], "HV")
+
     def test_class_matching_is_kicad_like(self):
         self.assertTrue(D.in_class("Logic_Power", "Logic*"))
         self.assertTrue(D.in_class("logic", "Logic*"))
@@ -109,6 +122,31 @@ class Phases(unittest.TestCase):
                 self.assertLessEqual(x1, 10 + d.band + 1e-6, c.ref)
                 self.assertLessEqual(y1, 10 + d.band + 1e-6, c.ref)
             else:  # outside region + band + gap
+                self.assertTrue(x0 >= 10 + d.band + d.gap - 1e-6 or y0 >= 10 + d.band + d.gap - 1e-6, c.ref)
+
+    def test_only_inner_parts_move(self):
+        for c in self.problem.components:
+            c.fixed = c.fixed or c.domain == "out"
+        calls = []
+        solve = lambda prob: calls.append(prob) or legalize(
+            prob, {c.key: Placement(20, 15) for c in prob.components if not c.fixed}, grid=0.5)[0]
+        sol = D.place(self.problem, solve)
+        self.assertEqual(len(calls), 1)  # the empty outer pass is skipped
+        self.assertEqual(set(sol), {c.key for c in self.problem.components if not c.fixed})
+
+    def test_only_outer_parts_move_and_stay_out(self):
+        for c in self.problem.components:
+            c.fixed = c.fixed or c.domain in ("in", "bridge")
+        self.assertTrue(D.enforced(self.problem))
+        calls = []
+        solve = lambda prob: calls.append(prob) or legalize(
+            prob, {c.key: Placement(5, 5) for c in prob.components if not c.fixed}, grid=0.5)[0]
+        sol = D.place(self.problem, solve)
+        self.assertEqual(len(calls), 1)
+        d = self.problem.domains
+        for c in self.problem.components:
+            if not c.fixed:
+                x0, y0, _, _ = sol[c.key].box(c)
                 self.assertTrue(x0 >= 10 + d.band + d.gap - 1e-6 or y0 >= 10 + d.band + d.gap - 1e-6, c.ref)
 
     def test_not_enforced_without_a_region(self):

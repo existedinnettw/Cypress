@@ -42,9 +42,16 @@ BAND = 3.0  # mm around the region in which bridges may straddle the boundary
 CELL = 0.5  # mm raster used to turn region outlines into rectangles
 
 _RULE_NAME = re.compile(r"\(\s*rule\s+(\"[^\"]*\"|[^\s()]+)")
-_COND = re.compile(
-    r"([AB])\s*\.\s*NetClass\s*==\s*['\"]([^'\"]+)['\"]\s*&&\s*([AB])\s*\.\s*NetClass\s*!=\s*['\"]([^'\"]+)['\"]")
-_MIN = re.compile(r"\(\s*constraint\s+clearance\s+\(\s*min\s+([0-9.]+)\s*(mm|mil)?\s*\)")
+_CONDITION = re.compile(r"\(\s*condition\s+\"((?:[^\"\\\\]|\\\\.)*)\"\s*\)")
+# the whole condition must be exactly the partition, nothing else (a layer or
+# type term would make it a scoped rule, not a board-wide barrier)
+_PARTITION = re.compile(
+    r"\s*\(?\s*([AB])\s*\.\s*NetClass\s*==\s*'([^']+)'\s*\)?\s*&&"
+    r"\s*\(?\s*([AB])\s*\.\s*NetClass\s*!=\s*'([^']+)'\s*\)?\s*")
+_MIN = re.compile(r"\(\s*constraint\s+clearance\s+\(\s*min\s+([0-9.]+)\s*([a-z]*)\s*\)")
+# units KiCad accepts in rules; a value without one makes KiCad reject the
+# whole rules file, so such a rule is no barrier
+_UNIT_MM = {"mm": 1.0, "mil": 0.0254, "in": 25.4}
 
 
 @dataclass
@@ -90,11 +97,14 @@ def read_barrier(dru_text: str) -> Optional[Tuple[str, str, float]]:
     for name, body in _rules(dru_text):
         if re.search(r"\(\s*severity\s+ignore\s*\)", body) or re.search(r"\(\s*layer\s", body):
             continue
-        c = _COND.search(body)
+        conds = _CONDITION.findall(body)
+        c = _PARTITION.fullmatch(conds[0]) if len(conds) == 1 else None
         v = _MIN.search(body)
         if not c or not v or c.group(1) == c.group(3) or c.group(2) != c.group(4):
             continue
-        gap = float(v.group(1)) * (0.0254 if v.group(2) == "mil" else 1.0)
+        if v.group(2) not in _UNIT_MM:
+            continue
+        gap = float(v.group(1)) * _UNIT_MM[v.group(2)]
         if best is None or gap > best[2]:
             best = (name, c.group(2), gap)
     return best
@@ -227,19 +237,21 @@ def phase2(problem: Problem, outer: Solution) -> Problem:
 
 
 def enforced(problem: Problem) -> bool:
+    """Domains apply: a region is drawn and some part with a domain moves
+    (either side: moving only outer parts must still keep them out)."""
     d = problem.domains
-    return bool(d and d.region and any(not c.fixed and c.domain in (d.inner, "bridge")
-                                       for c in problem.components))
+    return bool(d and d.region and any(not c.fixed and c.domain for c in problem.components))
 
 
 def place(problem: Problem, solve: Callable[[Problem], Solution]) -> Solution:
     """Two-phase placement for ``problem`` with enforced domains. ``solve``
     runs global placement (and legalization) on a problem and returns its
-    solution; the merged solution is for the original components."""
+    solution; the merged solution is for the original components. A pass
+    with nothing to move (e.g. only inner parts selected) is skipped."""
     first = phase1(problem)
-    outer = solve(first)
+    outer = solve(first) if first.movable() else {}
     second = phase2(problem, outer)
-    inner = solve(second)
+    inner = solve(second) if second.movable() else {}
     merged = dict(outer)
     merged.update(inner)
     return {k: v for k, v in merged.items() if not k.startswith("domain-")}
